@@ -58,6 +58,8 @@ Flex:AI 是一个**真实可用的 GPU/NPU 算力切分工具**，但实现方�
   long GpuCoreLimiter::PidController::CalculateDelay(int diff) {
     // 增量式 PID 控制
     long delay = lround(kp * (diff - prevDiff1) + ki * diff + kd * (diff - coeffDouble * prevDiff1 + prevDiff2));
+    prevDiff2 = prevDiff1;
+    prevDiff1 = diff;
     return delay;
   }
   ```
@@ -185,7 +187,7 @@ class NpuTimesliceScheduler {
 // npu_timeslice_scheduler.cpp L96-122
 void NpuTimesliceScheduler::SelectNewCurrent() {
     // 检测 current 节点是否超时（死亡）
-    if (now - curTimestamp > ERROR_CHECK_TIMEOUT) {
+    if (now - curTimestamp > ERR_CHECK_TIMEOUT) {
         return;
     }
     // 尝试 CAS 选举新的 current
@@ -220,16 +222,17 @@ void NpuTimesliceScheduler::SelectNewCurrent() {
 **1. 显存隔离**
 
 ```cpp
-// memory_limiter.cpp
-bool MemoryLimiter::MemoryCheck(size_t requested) {
-    size_t used;
-    int ret = xpu_.MemoryUsed(used);
-    size_t quota = config_.MemoryQuota();
-    if (requested + used > quota) {
-        return false;  // 超限拒绝
-    }
-    return true;
-}
+// cuda_hooks.cpp - cuMemAlloc_v2 Hook
+CUresult FUNC_HOOK_BEGIN(cuMemAlloc_v2, CUdeviceptr *dptr, size_t bytesize)
+  auto memGuard = CudaResourceLimiter::Instance().GuardedMemoryCheck(bytesize);
+  if (memGuard.Error()) {
+    return CUDA_ERROR_UNKNOWN;
+  }
+  if (!memGuard.enough) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  return original(dptr, bytesize);
+FUNC_HOOK_END
 ```
 
 **2. 算力限制 (PID 控制)**
@@ -354,5 +357,5 @@ void GpuCoreLimiter::ComputingPowerLimiter() {
 
 ---
 
-**报告生成者**: 底层系统架构师 (15年经验)  
+**报告生成方法**: 基于静态代码分析与架构对照验证  
 **审计原则**: "代码不撒谎"
